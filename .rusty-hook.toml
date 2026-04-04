@@ -1,0 +1,2 @@
+[hooks]
+pre-commit = "cargo fmt -- --check && cargo clippy -- -D warnings"
