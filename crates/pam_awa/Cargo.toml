@@ -1,0 +1,12 @@
+[package]
+name = "pam_awa"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "pam_awa"
+crate-type = ["cdylib"]
+
+[dependencies]
+awa-ipc = { path = "../awa-ipc" }
+pamsm = { workspace = true }
