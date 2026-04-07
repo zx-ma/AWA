@@ -1,0 +1,18 @@
+[package]
+name = "awa-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "awa"
+path = "src/main.rs"
+
+[dependencies]
+awa-ipc = { path = "../awa-ipc", features = ["async"] }
+awa-core = { path = "../awa-core" }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
