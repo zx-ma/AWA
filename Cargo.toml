@@ -14,14 +14,17 @@ edition = "2024"
 
 [workspace.dependencies]
 # ML / inference
-ort     = { version = "2.0.0-rc.9", features = ["ndarray"] }
-ndarray = "0.16"
+ort = { version = "2.0.0-rc.12", features = ["ndarray"] }
+ndarray = "0.17.2"
 
 # Image handling
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+] }
 
 # Serialization
-serde      = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Async runtime
@@ -45,10 +48,10 @@ pamsm = "0.5"
 
 # Error handling
 thiserror = "2"
-anyhow    = "1"
+anyhow = "1"
 
 # Logging / tracing
-tracing            = "0.1"
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Date / time
