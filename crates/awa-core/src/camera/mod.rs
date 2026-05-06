@@ -47,18 +47,25 @@ impl CameraSet {
     }
 
     pub fn capture(&self) -> AwaResult<CaptureResult> {
-        let rgb = self.rgb.capture()?;
-        let ir = match &self.ir {
-            Some(c) => match c.capture() {
-                Ok(g) => Some(g),
-                Err(e) => {
-                    tracing::warn!("ir capture failed: {}", e);
-                    None
-                }
-            },
-            None => None,
-        };
-        Ok(CaptureResult { rgb, ir })
+        std::thread::scope(|s| {
+            let rgb_handle = s.spawn(|| self.rgb.capture());
+            let ir_handle = self.ir.as_ref().map(|c| s.spawn(|| c.capture()));
+
+            let rgb = rgb_handle.join().expect("rgb capture thread panicked")?;
+
+            let ir = match ir_handle {
+                Some(h) => match h.join().expect("ir capture thread panicked") {
+                    Ok(g) => Some(g),
+                    Err(e) => {
+                        tracing::warn!("ir capture failed: {}", e);
+                        None
+                    }
+                },
+                None => None,
+            };
+
+            Ok(CaptureResult { rgb, ir })
+        })
     }
 
     pub fn has_ir(&self) -> bool {
