@@ -1,4 +1,3 @@
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,6 +7,7 @@ use crate::error::AwaResult;
 
 pub mod align;
 pub mod arcface;
+// pub mod ir_liveness;  // disabled: linux uvc driver does not expose enough ir control to make this useful on commodity hardware
 pub mod minifas;
 pub mod scrfd;
 

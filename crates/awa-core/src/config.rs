@@ -41,6 +41,7 @@ pub enum AuthMode {
 pub struct AuthConfig {
     pub threshold: f32,
     pub liveness_threshold: f32,
+    pub ir_min_brightness: f32,
     pub mode: AuthMode,
     pub max_samples: usize,
 }
@@ -74,9 +75,7 @@ impl Config {
             }
         }
         Err(AwaError::Config(
-            "no config file found in $HOME/.config/awa/config.toml or               
-  /etc/awa/config.toml"
-                .into(),
+            "no config file found in $HOME/.config/awa/config.toml or /etc/awa/config.toml".into(),
         ))
     }
 }

@@ -130,7 +130,8 @@ dependencies = [
  "anyhow",
  "awa-core",
  "awa-ipc",
- "tokio",
+ "clap",
+ "libc",
  "tracing",
  "tracing-subscriber",
 ]

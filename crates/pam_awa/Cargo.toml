@@ -9,4 +9,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 awa-ipc = { path = "../awa-ipc" }
-pamsm = { workspace = true }
+pamsm = { workspace = true, features = ["libpam"] }
