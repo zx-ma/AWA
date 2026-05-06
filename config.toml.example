@@ -18,7 +18,8 @@ ir_height   = 360
 threshold           = 0.40    # cosine similarity; calibrate with `awa calibrate`   
 liveness_threshold  = 0.85    # rgb liveness probability
 mode                = "ir-preferred"   # or "rgb-only"                              
-max_samples         = 5                                                             
+max_samples         = 5      
+ir_min_brightness   = 50.0    # mean ir pixel value in face region;   below this likely spoof                                               
                                                                                     
 [store]                                                                             
 base_dir = "/home/mzx/.local/share/awa/enrollments"

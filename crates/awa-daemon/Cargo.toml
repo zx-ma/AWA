@@ -8,9 +8,10 @@ name = "awa-daemon"
 path = "src/main.rs"
 
 [dependencies]
-awa-ipc = { path = "../awa-ipc", features = ["async"] }
+awa-ipc = { path = "../awa-ipc" }
 awa-core = { path = "../awa-core" }
-tokio = { workspace = true }
+clap = { workspace = true }
+libc = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

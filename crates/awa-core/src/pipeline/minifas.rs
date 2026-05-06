@@ -9,11 +9,7 @@ pub const MINIFAS_INPUT_SIZE: u32 = 128;
 const BBOX_EXPAND: f32 = 2.7;
 const SOFTMAX_TEMPERATURE: f32 = 10.0;
 
-pub fn liveness_score(
-    session: &mut Session,
-    img: &RgbImage,
-    bbox: [f32; 4],
-) -> AwaResult<f32> {
+pub fn liveness_score(session: &mut Session, img: &RgbImage, bbox: [f32; 4]) -> AwaResult<f32> {
     let crop = expand_and_crop(img, bbox);
 
     let mut tensor = Array4::<f32>::zeros((1, 3, 128, 128));

@@ -1,3 +1,5 @@
+#[cfg(feature = "camera")]
+pub mod auth;
 pub mod config;
 pub mod enrollment;
 pub mod error;

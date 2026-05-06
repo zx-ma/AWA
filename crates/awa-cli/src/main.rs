@@ -105,6 +105,16 @@ fn resolve_user(arg: Option<String>) -> Result<String> {
     if let Some(u) = arg {
         return Ok(u);
     }
+    if let Ok(u) = std::env::var("PAM_RUSER") {
+        if !u.is_empty() {
+            return Ok(u);
+        }
+    }
+    if let Ok(u) = std::env::var("PAM_USER") {
+        if !u.is_empty() {
+            return Ok(u);
+        }
+    }
     std::env::var("USER").context("$USER not set; pass --user explicitly")
 }
 
@@ -189,89 +199,47 @@ fn run_enroll(cfg: &Config, user: &str, label: &str, num_samples: usize) -> Resu
 }
 
 fn run_auth(cfg: &Config, user: &str) -> Result<()> {
-    use std::sync::Arc;
-    use std::time::Instant;
+    use awa_core::auth::AuthEngine;
 
-    use awa_core::camera::{CameraConfig, CameraSet};
-    use awa_core::enrollment::store::EnrollmentStore;
-    use awa_core::pipeline::align::align_face;
-    use awa_core::pipeline::arcface::extract_embedding;
-    use awa_core::pipeline::minifas::liveness_score;
-    use awa_core::pipeline::scrfd::detect;
-    use awa_core::pipeline::{ModelPaths as PipelineModelPaths, Pipeline};
-
-    let t0 = Instant::now();
-
-    let model_paths = PipelineModelPaths {
-        scrfd: &cfg.models.scrfd,
-        arcface: &cfg.models.arcface,
-        minifas: &cfg.models.minifas,
-    };
-    let pipeline = Pipeline::load(&model_paths).context("load pipeline")?;
-    let mut pipe = Arc::try_unwrap(pipeline)
-        .ok()
-        .context("pipeline single ref")?;
-
-    let cam_cfg = CameraConfig {
-        rgb_path: &cfg.camera.rgb_device,
-        rgb_width: cfg.camera.rgb_width,
-        rgb_height: cfg.camera.rgb_height,
-        ir_path: cfg.camera.ir_device.as_deref(),
-        ir_width: cfg.camera.ir_width,
-        ir_height: cfg.camera.ir_height,
-    };
-    let cameras = CameraSet::open(&cam_cfg).context("open cameras")?;
-
-    let store = EnrollmentStore::new(&cfg.store.base_dir);
-    if store.load(user)?.is_none() {
-        anyhow::bail!("user '{user}' not enrolled. run `awa enroll` first");
-    }
+    let mut engine = AuthEngine::new(cfg.clone()).context("load auth engine")?;
 
     println!("authenticating {user}...");
-    let frame = cameras.capture().context("capture frame")?;
+    let report = engine.authenticate(user).context("authenticate")?;
+    let similarity = report.similarity.unwrap_or(0.0);
+    let liveness = report.liveness_score.unwrap_or(0.0);
+    let face_score = report.face_score.unwrap_or(0.0);
 
-    let faces = detect(&mut pipe.scrfd, &frame.rgb).context("detect")?;
-    let face = faces
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("no face detected"))?;
-
-    let aligned = align_face(&frame.rgb, &face.keypoints);
-    let embedding = extract_embedding(&mut pipe.arcface, &aligned).context("embed")?;
-    let liveness = liveness_score(&mut pipe.minifas, &frame.rgb, face.bbox).context("liveness")?;
-
-    let similarity = store
-        .best_similarity(user, &embedding)
-        .context("compare")?
-        .ok_or_else(|| anyhow::anyhow!("no enrollment data after load? bug"))?;
-
-    let pass_match = similarity >= cfg.auth.threshold;
-    let pass_liveness = liveness >= cfg.auth.liveness_threshold;
-    let pass = pass_match && pass_liveness;
-
-    let elapsed = t0.elapsed();
     println!();
-    println!("user:        {user}");
-    println!("face score:  {:.3}", face.score);
+    println!("user:        {}", report.user);
+    println!("face score:  {:.3}", face_score);
     println!(
         "similarity:  {:.4}  (threshold {:.2}) {}",
         similarity,
         cfg.auth.threshold,
-        if pass_match { "PASS" } else { "FAIL" }
+        if report.pass_match { "PASS" } else { "FAIL" }
     );
     println!(
         "liveness:    {:.4}  (threshold {:.2}) {}",
         liveness,
         cfg.auth.liveness_threshold,
-        if pass_liveness { "PASS" } else { "FAIL" }
+        if report.pass_liveness { "PASS" } else { "FAIL" }
     );
-    println!("elapsed:     {:.2}s", elapsed.as_secs_f32());
+    if let Some(reason) = &report.reason {
+        println!("reason:      {reason}");
+    }
+    println!("attempts:    {}", report.attempts);
+    println!("elapsed:     {:.2}s", report.elapsed.as_secs_f32());
     println!();
     println!(
         "result:      {}",
-        if pass { "AUTHENTICATED" } else { "DENIED" }
+        if report.pass {
+            "AUTHENTICATED"
+        } else {
+            "DENIED"
+        }
     );
 
-    if !pass {
+    if !report.pass {
         std::process::exit(1);
     }
     Ok(())
