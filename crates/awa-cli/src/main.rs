@@ -1,4 +1,8 @@
-use std::path::PathBuf;
+use std::ffi::{CStr, CString};
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -49,12 +53,55 @@ enum Command {
     },
     /// print current configuration                                                 
     ConfigShow,
+    /// install binaries, pam module, and systemd service
+    Install {
+        /// release artifact directory
+        #[arg(long)]
+        build_dir: Option<PathBuf>,
+        /// install prefix for awa and awa-daemon
+        #[arg(long, default_value = "/usr/local")]
+        prefix: PathBuf,
+        /// pam module directory
+        #[arg(long)]
+        pam_dir: Option<PathBuf>,
+        /// systemd system unit directory
+        #[arg(long, default_value = "/etc/systemd/system")]
+        systemd_dir: PathBuf,
+        /// daemon unix socket path
+        #[arg(long, default_value = awa_ipc::framing::DEFAULT_SOCKET_PATH)]
+        socket: PathBuf,
+        /// install files without enabling or starting the service
+        #[arg(long)]
+        no_enable: bool,
+    },
+    /// enable or disable pam services
+    Pam {
+        #[command(subcommand)]
+        action: PamAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 enum DeviceAction {
     /// list video devices and their formats      
     List,
+}
+
+#[derive(Subcommand, Debug)]
+enum PamAction {
+    /// add pam_awa to a service
+    Enable {
+        /// pam service name, for example sudo or hyprlock
+        service: String,
+        /// daemon unix socket path
+        #[arg(long, default_value = awa_ipc::framing::DEFAULT_SOCKET_PATH)]
+        socket: PathBuf,
+    },
+    /// restore the service backup or remove pam_awa
+    Disable {
+        /// pam service name, for example sudo or hyprlock
+        service: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -66,12 +113,7 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-
-    let config_path = cli.config.clone();
-    let cfg = match config_path {
-        Some(p) => Config::load(&p).with_context(|| format!("load config {}", p.display()))?,
-        None => Config::discover().context("discover config")?.1,
-    };
+    let config = cli.config.clone();
 
     match cli.command {
         Command::Enroll {
@@ -79,10 +121,12 @@ fn main() -> Result<()> {
             label,
             samples,
         } => {
+            let cfg = load_config(config.as_ref())?;
             let user = resolve_user(user)?;
             run_enroll(&cfg, &user, &label, samples)?;
         }
         Command::Auth { user } => {
+            let cfg = load_config(config.as_ref())?;
             let user = resolve_user(user)?;
             run_auth(&cfg, &user)?;
         }
@@ -93,11 +137,321 @@ fn main() -> Result<()> {
             DeviceAction::List => println!("[stub] device list"),
         },
         Command::ConfigShow => {
+            let cfg = load_config(config.as_ref())?;
             let pretty = toml::to_string_pretty(&cfg).context("serialize config")?;
             println!("{pretty}");
         }
+        Command::Install {
+            build_dir,
+            prefix,
+            pam_dir,
+            systemd_dir,
+            socket,
+            no_enable,
+        } => {
+            run_install(
+                config.as_ref(),
+                build_dir,
+                &prefix,
+                pam_dir.as_ref(),
+                &systemd_dir,
+                &socket,
+                no_enable,
+            )?;
+        }
+        Command::Pam { action } => match action {
+            PamAction::Enable { service, socket } => {
+                run_pam_enable(&service, &socket)?;
+            }
+            PamAction::Disable { service } => {
+                run_pam_disable(&service)?;
+            }
+        },
     }
 
+    Ok(())
+}
+
+fn load_config(path: Option<&PathBuf>) -> Result<Config> {
+    match path {
+        Some(p) => Config::load(p).with_context(|| format!("load config {}", p.display())),
+        None => Ok(Config::discover().context("discover config")?.1),
+    }
+}
+
+fn resolve_config_path(path: Option<&PathBuf>) -> Result<PathBuf> {
+    let path = match path {
+        Some(p) => p.clone(),
+        None => match Config::discover() {
+            Ok((path, _)) => path,
+            Err(e) => sudo_user_config_path()
+                .filter(|path| path.exists())
+                .ok_or_else(|| anyhow::anyhow!(e))?,
+        },
+    };
+    path.canonicalize()
+        .with_context(|| format!("canonicalize config {}", path.display()))
+}
+
+fn sudo_user_config_path() -> Option<PathBuf> {
+    let user = std::env::var("SUDO_USER").ok()?;
+    user_home(&user).map(|home| home.join(".config/awa/config.toml"))
+}
+
+fn user_home(user: &str) -> Option<PathBuf> {
+    let user = CString::new(user).ok()?;
+    unsafe {
+        let passwd = libc::getpwnam(user.as_ptr());
+        if passwd.is_null() {
+            return None;
+        }
+        let home = CStr::from_ptr((*passwd).pw_dir);
+        Some(PathBuf::from(home.to_string_lossy().as_ref()))
+    }
+}
+
+fn run_install(
+    config: Option<&PathBuf>,
+    build_dir: Option<PathBuf>,
+    prefix: &Path,
+    pam_dir: Option<&PathBuf>,
+    systemd_dir: &Path,
+    socket: &Path,
+    no_enable: bool,
+) -> Result<()> {
+    let config_path = resolve_config_path(config)?;
+    let build_dir = match build_dir {
+        Some(path) => path,
+        None => std::env::current_exe()
+            .context("resolve current executable")?
+            .parent()
+            .context("current executable has no parent directory")?
+            .to_path_buf(),
+    };
+    let pam_dir = match pam_dir {
+        Some(path) => path.clone(),
+        None => discover_pam_dir()?,
+    };
+
+    let bin_dir = prefix.join("bin");
+    let awa_src = build_dir.join("awa");
+    let daemon_src = build_dir.join("awa-daemon");
+    let pam_src = build_dir.join("libpam_awa.so");
+    let awa_dst = bin_dir.join("awa");
+    let daemon_dst = bin_dir.join("awa-daemon");
+    let pam_dst = pam_dir.join("pam_awa.so");
+    let unit_dst = systemd_dir.join("awa-daemon.service");
+
+    install_file(&awa_src, &awa_dst, 0o755)?;
+    install_file(&daemon_src, &daemon_dst, 0o755)?;
+    install_file(&pam_src, &pam_dst, 0o755)?;
+
+    fs::create_dir_all(systemd_dir)
+        .with_context(|| format!("create systemd dir {}", systemd_dir.display()))?;
+    fs::write(
+        &unit_dst,
+        systemd_unit(&daemon_dst, &config_path, socket).as_bytes(),
+    )
+    .with_context(|| format!("write {}", unit_dst.display()))?;
+    fs::set_permissions(&unit_dst, fs::Permissions::from_mode(0o644))
+        .with_context(|| format!("chmod {}", unit_dst.display()))?;
+
+    println!("installed {}", awa_dst.display());
+    println!("installed {}", daemon_dst.display());
+    println!("installed {}", pam_dst.display());
+    println!("installed {}", unit_dst.display());
+
+    if no_enable {
+        println!("service not enabled; run `sudo systemctl enable --now awa-daemon.service`");
+    } else {
+        run_systemctl(&["daemon-reload"])?;
+        run_systemctl(&["enable", "--now", "awa-daemon.service"])?;
+        println!("enabled and started awa-daemon.service");
+    }
+
+    println!();
+    println!("pam line for sudo or hyprlock:");
+    println!("auth sufficient pam_awa.so");
+    Ok(())
+}
+
+fn discover_pam_dir() -> Result<PathBuf> {
+    for path in [
+        "/usr/lib/security",
+        "/usr/lib64/security",
+        "/lib/security",
+        "/lib/x86_64-linux-gnu/security",
+    ] {
+        let path = PathBuf::from(path);
+        if path.is_dir() {
+            return Ok(path);
+        }
+    }
+    anyhow::bail!("could not find pam module directory; pass --pam-dir")
+}
+
+fn install_file(src: &Path, dst: &Path, mode: u32) -> Result<()> {
+    if !src.exists() {
+        anyhow::bail!(
+            "missing {}; build release artifacts first or pass --build-dir",
+            src.display()
+        );
+    }
+    if paths_are_same(src, dst) {
+        fs::set_permissions(dst, fs::Permissions::from_mode(mode))
+            .with_context(|| format!("chmod {}", dst.display()))?;
+        return Ok(());
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::copy(src, dst).with_context(|| format!("copy {} to {}", src.display(), dst.display()))?;
+    fs::set_permissions(dst, fs::Permissions::from_mode(mode))
+        .with_context(|| format!("chmod {}", dst.display()))?;
+    Ok(())
+}
+
+fn paths_are_same(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn systemd_unit(daemon: &Path, config: &Path, socket: &Path) -> String {
+    format!(
+        "[Unit]\n\
+Description=Awa face authentication daemon\n\
+After=local-fs.target\n\
+\n\
+[Service]\n\
+Type=simple\n\
+Environment=RUST_LOG=awa_daemon=info,awa_core=info,ort=warn\n\
+RuntimeDirectory=awa\n\
+RuntimeDirectoryMode=0755\n\
+ExecStart={} --config {} --socket {}\n\
+Restart=on-failure\n\
+RestartSec=2\n\
+\n\
+[Install]\n\
+WantedBy=multi-user.target\n",
+        systemd_arg(daemon),
+        systemd_arg(config),
+        systemd_arg(socket),
+    )
+}
+
+fn systemd_arg(path: &Path) -> String {
+    let value = path.display().to_string();
+    if value.chars().any(char::is_whitespace) {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        value
+    }
+}
+
+fn run_systemctl(args: &[&str]) -> Result<()> {
+    let status = ProcessCommand::new("systemctl")
+        .args(args)
+        .status()
+        .with_context(|| format!("run systemctl {}", args.join(" ")))?;
+    if !status.success() {
+        anyhow::bail!("systemctl {} failed with {}", args.join(" "), status);
+    }
+    Ok(())
+}
+
+fn run_pam_enable(service: &str, socket: &Path) -> Result<()> {
+    let path = pam_service_path(service)?;
+    let backup = pam_backup_path(service)?;
+    let original = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+
+    if original.lines().any(|line| line.contains("pam_awa.so")) {
+        println!("{} already contains pam_awa.so", path.display());
+        return Ok(());
+    }
+
+    if !backup.exists() {
+        fs::copy(&path, &backup)
+            .with_context(|| format!("backup {} to {}", path.display(), backup.display()))?;
+        println!("backed up {}", backup.display());
+    }
+
+    let line = pam_auth_line(socket);
+    let mut output = String::new();
+    let mut inserted = false;
+    for existing in original.lines() {
+        if !inserted && existing.trim_start().starts_with("auth") {
+            output.push_str(&line);
+            output.push('\n');
+            inserted = true;
+        }
+        output.push_str(existing);
+        output.push('\n');
+    }
+    if !inserted {
+        output.push_str(&line);
+        output.push('\n');
+    }
+
+    write_pam_service(&path, &output)?;
+    println!("enabled pam_awa for {}", service);
+    Ok(())
+}
+
+fn run_pam_disable(service: &str) -> Result<()> {
+    let path = pam_service_path(service)?;
+    let backup = pam_backup_path(service)?;
+    if backup.exists() {
+        fs::copy(&backup, &path)
+            .with_context(|| format!("restore {} to {}", backup.display(), path.display()))?;
+        println!("restored {}", path.display());
+        return Ok(());
+    }
+
+    let original = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let output = original
+        .lines()
+        .filter(|line| !line.contains("pam_awa.so"))
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    write_pam_service(&path, &output)?;
+    println!("removed pam_awa from {}", path.display());
+    Ok(())
+}
+
+fn pam_service_path(service: &str) -> Result<PathBuf> {
+    if service.is_empty() || service.contains('/') {
+        anyhow::bail!("invalid pam service name: {service}");
+    }
+    Ok(PathBuf::from("/etc/pam.d").join(service))
+}
+
+fn pam_backup_path(service: &str) -> Result<PathBuf> {
+    Ok(PathBuf::from("/etc/pam.d").join(format!("{service}.awa.bak")))
+}
+
+fn pam_auth_line(socket: &Path) -> String {
+    if socket == Path::new(awa_ipc::framing::DEFAULT_SOCKET_PATH) {
+        "auth    sufficient  pam_awa.so".to_string()
+    } else {
+        format!("auth    sufficient  pam_awa.so socket={}", socket.display())
+    }
+}
+
+fn write_pam_service(path: &Path, contents: &str) -> Result<()> {
+    let metadata = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    let tmp = path.with_file_name(format!(
+        ".{}.tmp.{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("pam-service"),
+        std::process::id()
+    ));
+    fs::write(&tmp, contents).with_context(|| format!("write {}", tmp.display()))?;
+    fs::set_permissions(&tmp, metadata.permissions())
+        .with_context(|| format!("chmod {}", tmp.display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("replace {}", path.display()))?;
     Ok(())
 }
 
