@@ -10,6 +10,9 @@ pub enum AwaError {
     NoFaceDetected,
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("image: {0}")]
+    Image(#[from] image::ImageError),
+
     #[error("config: {0}")]
     Config(String),
 }

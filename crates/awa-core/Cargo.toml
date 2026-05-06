@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [features]
+default = ["camera"]
 camera = ["dep:v4l"]
+
 
 [dependencies]
 v4l = { workspace = true, optional = true }
