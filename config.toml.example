@@ -1,0 +1,24 @@
+# awa face authentication config                                                    
+# copy to ~/.config/awa/config.toml and edit paths                                  
+                                        
+[models]                                                                            
+scrfd   = "/home/mzx/projects/myOwn/awa/models/scrfd_10g_bnkps.onnx"              
+arcface = "/home/mzx/projects/myOwn/awa/models/arcface_w600k_r50.onnx"
+minifas = "/home/mzx/projects/myOwn/awa/models/minifas_v2.onnx"
+                                                                                    
+[camera]                   
+rgb_device  = "/dev/video0"                                                         
+ir_device   = "/dev/video2"   # comment out if no ir camera                         
+rgb_width   = 1280                                                                  
+rgb_height  = 720                                                                   
+ir_width    = 640                                                                   
+ir_height   = 360                                                                   
+                                                                                    
+[auth]                                                                              
+threshold           = 0.40    # cosine similarity; calibrate with `awa calibrate`   
+liveness_threshold  = 0.85    # rgb liveness probability
+mode                = "ir-preferred"   # or "rgb-only"                              
+max_samples         = 5                                                             
+                                                                                    
+[store]                                                                             
+base_dir = "/home/mzx/.local/share/awa/enrollments"
