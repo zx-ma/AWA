@@ -38,6 +38,7 @@ pub enum Response {
         camera_ready: bool,
         has_ir: bool,
     },
+    ShutdownAck,
     Error {
         message: String,
     },
