@@ -459,15 +459,15 @@ fn resolve_user(arg: Option<String>) -> Result<String> {
     if let Some(u) = arg {
         return Ok(u);
     }
-    if let Ok(u) = std::env::var("PAM_RUSER") {
-        if !u.is_empty() {
-            return Ok(u);
-        }
+    if let Ok(u) = std::env::var("PAM_RUSER")
+        && !u.is_empty()
+    {
+        return Ok(u);
     }
-    if let Ok(u) = std::env::var("PAM_USER") {
-        if !u.is_empty() {
-            return Ok(u);
-        }
+    if let Ok(u) = std::env::var("PAM_USER")
+        && !u.is_empty()
+    {
+        return Ok(u);
     }
     std::env::var("USER").context("$USER not set; pass --user explicitly")
 }

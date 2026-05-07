@@ -5,6 +5,8 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::prelude::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -13,6 +15,9 @@ use awa_core::auth::{AuthEngine, AuthReport};
 use awa_core::config::Config;
 use awa_ipc::framing::{DEFAULT_SOCKET_PATH, read_json, write_json};
 use awa_ipc::messages::{Request, Response};
+
+const CONN_TIMEOUT: Duration = Duration::from_secs(30);
+static PASSWD_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Parser, Debug)]
 #[command(name = "awa-daemon", version, about = "awa authentication daemon")]
@@ -43,7 +48,9 @@ fn main() -> Result<()> {
     };
 
     tracing::info!("loading auth engine");
-    let mut engine = AuthEngine::new(cfg).context("load auth engine")?;
+    let engine = Arc::new(Mutex::new(
+        AuthEngine::new(cfg).context("load auth engine")?,
+    ));
     let listener = bind_socket(&args.socket)?;
     tracing::info!("listening on {}", args.socket.display());
 
@@ -56,11 +63,19 @@ fn main() -> Result<()> {
             }
         };
 
-        match handle_client(&mut stream, &mut engine) {
-            Ok(true) => break,
-            Ok(false) => {}
-            Err(e) => tracing::warn!("client failed: {:?}", e),
+        if let Err(e) = stream.set_read_timeout(Some(CONN_TIMEOUT)) {
+            tracing::warn!("set read timeout failed: {}", e);
         }
+        if let Err(e) = stream.set_write_timeout(Some(CONN_TIMEOUT)) {
+            tracing::warn!("set write timeout failed: {}", e);
+        }
+
+        let engine = Arc::clone(&engine);
+        std::thread::spawn(move || {
+            if let Err(e) = handle_client(&mut stream, engine) {
+                tracing::warn!("client failed: {:?}", e);
+            }
+        });
     }
 
     Ok(())
@@ -84,36 +99,41 @@ fn bind_socket(path: &Path) -> Result<UnixListener> {
 
     let listener =
         UnixListener::bind(path).with_context(|| format!("bind socket {}", path.display()))?;
+    // socket is world-rw; the actual auth boundary is so_peercred in handle_client.
+    // any local user can connect, but daemon checks peer uid before honoring auth requests.
     fs::set_permissions(path, fs::Permissions::from_mode(0o666))
         .with_context(|| format!("chmod socket {}", path.display()))?;
     Ok(listener)
 }
 
-fn handle_client(stream: &mut UnixStream, engine: &mut AuthEngine) -> Result<bool> {
+fn handle_client(stream: &mut UnixStream, engine: Arc<Mutex<AuthEngine>>) -> Result<()> {
     let request: Request = read_json(stream).context("read request")?;
-    let shutdown = matches!(request, Request::Shutdown);
     let uid = peer_uid(stream);
+    let mut should_exit = false;
     let response = match request {
         Request::Authenticate { username } => {
             tracing::info!("auth request user={} peer_uid={:?}", username, uid);
             if peer_can_authenticate(stream, &username) {
-                authenticate(engine, &username)
+                let mut guard = engine.lock().unwrap_or_else(|e| e.into_inner());
+                authenticate(&mut guard, &username)
             } else {
                 Response::Error {
                     message: "peer uid cannot authenticate requested user".to_string(),
                 }
             }
         }
-        Request::Status => Response::StatusResponse {
-            models_loaded: true,
-            camera_ready: true,
-            has_ir: engine.has_ir(),
-        },
-        Request::Shutdown if uid == Some(0) => Response::StatusResponse {
-            models_loaded: true,
-            camera_ready: true,
-            has_ir: engine.has_ir(),
-        },
+        Request::Status => {
+            let guard = engine.lock().unwrap_or_else(|e| e.into_inner());
+            Response::StatusResponse {
+                models_loaded: true,
+                camera_ready: true,
+                has_ir: guard.has_ir(),
+            }
+        }
+        Request::Shutdown if uid == Some(0) => {
+            should_exit = true;
+            Response::ShutdownAck
+        }
         Request::Shutdown => Response::Error {
             message: "shutdown requires root peer".to_string(),
         },
@@ -123,7 +143,13 @@ fn handle_client(stream: &mut UnixStream, engine: &mut AuthEngine) -> Result<boo
     };
 
     write_json(stream, &response).context("write response")?;
-    Ok(shutdown && uid == Some(0))
+
+    if should_exit {
+        tracing::info!("shutdown requested by root peer; exiting");
+        std::process::exit(0);
+    }
+
+    Ok(())
 }
 
 fn authenticate(engine: &mut AuthEngine, username: &str) -> Response {
@@ -200,6 +226,7 @@ fn peer_uid(stream: &UnixStream) -> Option<u32> {
 
 fn uid_for_user(username: &str) -> Option<u32> {
     let username = CString::new(username).ok()?;
+    let _guard = PASSWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         let passwd = libc::getpwnam(username.as_ptr());
         if passwd.is_null() {

@@ -1,4 +1,4 @@
-# awa
+# AWA
 
 **A**wa **W**inks **A**lice - linux face authentication
 
@@ -211,7 +211,7 @@ PAM does not load ONNX/runtime/camera code into sudo or hyprlock. that was the w
 
 ## license
 
-copyright (c) 2026 zhexuan ma
+copyright (c) 2026 Zhexuan Ma
 
 GNU General Public License v3.0 or later. see [LICENSE](./LICENSE).
 
