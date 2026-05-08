@@ -1,4 +1,3 @@
-// config loading from /etc/awa/config.toml
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};

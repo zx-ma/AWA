@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use ort::session::{Session, builder::GraphOptimizationLevel};
 
@@ -24,12 +23,12 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn load(paths: &ModelPaths) -> AwaResult<Arc<Self>> {
-        Ok(Arc::new(Self {
+    pub fn load(paths: &ModelPaths) -> AwaResult<Self> {
+        Ok(Self {
             scrfd: load_session(paths.scrfd)?,
             arcface: load_session(paths.arcface)?,
             minifas: load_session(paths.minifas)?,
-        }))
+        })
     }
 
     pub fn log_io(&self) {

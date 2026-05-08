@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use awa_core::pipeline::align::align_face;
 use awa_core::pipeline::arcface::{cosine_similarity, extract_embedding};
@@ -25,8 +24,7 @@ fn embeds_face_from_sample() {
         arcface: &models.join("arcface_w600k_r50.onnx"),
         minifas: &models.join("minifas_v2.onnx"),
     };
-    let pipeline = Pipeline::load(&paths).expect("models load");
-    let mut pipe = Arc::try_unwrap(pipeline).ok().expect("single ref");
+    let mut pipe = Pipeline::load(&paths).expect("models load");
 
     let img = image::open(root.join("test_data/face_sample.jpg"))
         .expect("open image")

@@ -1,6 +1,5 @@
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use awa_core::pipeline::minifas::liveness_score;
 use awa_core::pipeline::scrfd::detect;
@@ -36,8 +35,7 @@ fn liveness_distinguishes_real_from_spoof() {
         arcface: &models.join("arcface_w600k_r50.onnx"),
         minifas: &models.join("minifas_v2.onnx"),
     };
-    let pipeline = Pipeline::load(&paths).expect("models load");
-    let mut pipe = Arc::try_unwrap(pipeline).ok().expect("single ref");
+    let mut pipe = Pipeline::load(&paths).expect("models load");
 
     let real = score_for(
         &mut pipe.scrfd,

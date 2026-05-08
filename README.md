@@ -1,6 +1,6 @@
-# AWA
+# AWA : linux face authentication
 
-**A**wa **W**inks **A**lice - linux face authentication
+**A**wa **W**inks **A**lice
 
 the name doubles as a face kaomoji `(´・ω・`)` and a recursive acronym where the IR camera winks to authenticate the user
 
@@ -71,6 +71,9 @@ this installs roughly:
 ```
 
 PAM paths can differ by distro. pass `--pam-dir` if auto-detect gets it wrong.
+
+> [!WARNING]
+> do not start with sudo. test `awa auth`, then hyprlock or a throwaway PAM service first. keep a root shell open before changing sudo PAM.
 
 ## enable pam
 
@@ -207,9 +210,8 @@ PAM does not load ONNX/runtime/camera code into sudo or hyprlock. that was the w
 - enrollment data is stored as 512-dim float vectors in `~/.local/share/awa/enrollments/<user>.json` with mode `0600`. these are biometric templates. protect them.
 - daemon socket checks peer uid. root can request any user; normal users can only request themselves.
 - still early. no encrypted storage, no tpm binding, no anti-replay nonce.
-- be careful with sudo PAM. keep a root shell open when changing it.
 
-## license
+## License
 
 copyright (c) 2026 Zhexuan Ma
 

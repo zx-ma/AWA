@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use awa_core::camera::rgb::RgbCamera;
 use awa_core::pipeline::scrfd::detect;
@@ -67,8 +66,7 @@ fn capture_and_detect_from_camera() {
         arcface: &models.join("arcface_w600k_r50.onnx"),
         minifas: &models.join("minifas_v2.onnx"),
     };
-    let pipeline = Pipeline::load(&paths).expect("models load");
-    let mut pipe = Arc::try_unwrap(pipeline).ok().expect("single ref");
+    let mut pipe = Pipeline::load(&paths).expect("models load");
 
     let faces = detect(&mut pipe.scrfd, &img).expect("detect runs");
     println!("detected {} face(s)", faces.len());
