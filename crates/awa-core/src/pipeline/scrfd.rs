@@ -1,8 +1,15 @@
-// face detection
 use image::RgbImage;
 use ndarray::Array4;
+use ort::session::Session;
+use ort::value::TensorRef;
+
+use crate::error::{AwaError, AwaResult};
 
 pub const SCRFD_INPUT_SIZE: u32 = 640;
+const STRIDES: [u32; 3] = [8, 16, 32];
+const ANCHORS_PER_LOCATION: usize = 2;
+const SCORE_THRESHOLD: f32 = 0.5;
+const NMS_THRESHOLD: f32 = 0.4;
 
 #[derive(Debug, Clone)]
 pub struct DetectedFace {
@@ -38,16 +45,6 @@ pub fn preprocess(img: &RgbImage) -> Preprocessed {
 
     Preprocessed { tensor, scale }
 }
-
-use ort::session::Session;
-use ort::value::TensorRef;
-
-use crate::error::{AwaError, AwaResult};
-
-const STRIDES: [u32; 3] = [8, 16, 32];
-const ANCHORS_PER_LOCATION: usize = 2;
-const SCORE_THRESHOLD: f32 = 0.5;
-const NMS_THRESHOLD: f32 = 0.4;
 
 pub fn detect(session: &mut Session, img: &RgbImage) -> AwaResult<Vec<DetectedFace>> {
     let pre = preprocess(img);
@@ -131,8 +128,9 @@ fn nms(mut faces: Vec<DetectedFace>, threshold: f32) -> Vec<DetectedFace> {
     });
     let mut kept = Vec::new();
     while let Some(f) = faces.first().cloned() {
-        kept.push(f.clone());
-        faces.retain(|other| iou(&f.bbox, &other.bbox) < threshold);
+        let bbox = f.bbox;
+        kept.push(f);
+        faces.retain(|other| iou(&bbox, &other.bbox) < threshold);
     }
     kept
 }

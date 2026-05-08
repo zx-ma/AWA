@@ -473,7 +473,6 @@ fn resolve_user(arg: Option<String>) -> Result<String> {
 }
 
 fn run_enroll(cfg: &Config, user: &str, label: &str, num_samples: usize) -> Result<()> {
-    use std::sync::Arc;
     use std::thread::sleep;
     use std::time::Duration;
 
@@ -490,10 +489,7 @@ fn run_enroll(cfg: &Config, user: &str, label: &str, num_samples: usize) -> Resu
         arcface: &cfg.models.arcface,
         minifas: &cfg.models.minifas,
     };
-    let pipeline = Pipeline::load(&model_paths).context("load pipeline")?;
-    let mut pipe = Arc::try_unwrap(pipeline)
-        .ok()
-        .context("pipeline single ref")?;
+    let mut pipe = Pipeline::load(&model_paths).context("load pipeline")?;
 
     println!("opening cameras...");
     let cam_cfg = CameraConfig {

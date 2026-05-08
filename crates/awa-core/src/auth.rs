@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::camera::{CameraConfig, CameraSet};
@@ -39,10 +38,7 @@ impl AuthEngine {
             arcface: &cfg.models.arcface,
             minifas: &cfg.models.minifas,
         };
-        let pipeline = Pipeline::load(&model_paths)?;
-        let pipe = Arc::try_unwrap(pipeline).ok().ok_or_else(|| {
-            crate::error::AwaError::Config("pipeline arc has multiple refs".into())
-        })?;
+        let pipe = Pipeline::load(&model_paths)?;
 
         let cam_cfg = CameraConfig {
             rgb_path: &cfg.camera.rgb_device,

@@ -22,15 +22,11 @@ fn detects_face_in_sample() {
         arcface: &models.join("arcface_w600k_r50.onnx"),
         minifas: &models.join("minifas_v2.onnx"),
     };
-    let pipeline = Pipeline::load(&paths).expect("models load");
+    let mut pipe = Pipeline::load(&paths).expect("models load");
 
     let img_path = root.join("test_data/face_sample.jpg");
     let img = image::open(&img_path).expect("open image").to_rgb8();
     println!("image size: {}x{}", img.width(), img.height());
-
-    let mut pipe = std::sync::Arc::try_unwrap(pipeline)
-        .ok()
-        .expect("pipeline has only one ref");
 
     let faces = detect(&mut pipe.scrfd, &img).expect("detection runs");
 

@@ -1,13 +1,17 @@
-// enrollment persistence
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use crate::error::{AwaError, AwaResult};
+use chrono::Utc;
 
-use super::{CURRENT_SCHEMA_VERSION, EnrollmentFile};
+use crate::error::{AwaError, AwaResult};
+use crate::pipeline::arcface::{EMBEDDING_DIM, cosine_similarity};
+
+use super::{
+    CURRENT_SCHEMA_VERSION, EnrollmentFile, EnrollmentRecord, MAX_SAMPLES_PER_LABEL, Sample,
+};
 
 pub struct EnrollmentStore {
     base_dir: PathBuf,
@@ -24,56 +28,6 @@ impl EnrollmentStore {
         &self.base_dir
     }
 
-    fn path_for(&self, username: &str) -> PathBuf {
-        self.base_dir.join(format!("{}.json", username))
-    }
-
-    pub fn load(&self, username: &str) -> AwaResult<Option<EnrollmentFile>> {
-        let path = self.path_for(username);
-        match fs::read(&path) {
-            Ok(data) => {
-                let file: EnrollmentFile = serde_json::from_slice(&data)
-                    .map_err(|e| AwaError::Config(format!("parse {}: {}", path.display(), e)))?;
-                if file.schema_version != CURRENT_SCHEMA_VERSION {
-                    return Err(AwaError::Config(format!(
-                        "schema version {} unsupported (expected {})",
-                        file.schema_version, CURRENT_SCHEMA_VERSION
-                    )));
-                }
-                Ok(Some(file))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    pub fn save(&self, file: &EnrollmentFile) -> AwaResult<()> {
-        fs::create_dir_all(&self.base_dir)?;
-        let final_path = self.path_for(&file.username);
-        let tmp_path = self
-            .base_dir
-            .join(format!(".{}.json.tmp.{}", file.username, process::id()));
-
-        let data = serde_json::to_vec_pretty(file)
-            .map_err(|e| AwaError::Config(format!("serialize: {}", e)))?;
-
-        let mut tmp = fs::File::create(&tmp_path)?;
-        tmp.write_all(&data)?;
-        tmp.sync_all()?;
-        drop(tmp);
-
-        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))?;
-        fs::rename(&tmp_path, &final_path)?;
-        Ok(())
-    }
-}
-
-use chrono::Utc;
-
-use super::{EnrollmentRecord, MAX_SAMPLES_PER_LABEL, Sample};
-use crate::pipeline::arcface::{EMBEDDING_DIM, cosine_similarity};
-
-impl EnrollmentStore {
     pub fn add_sample(
         &self,
         username: &str,
@@ -140,5 +94,48 @@ impl EnrollmentStore {
         }
 
         Ok(best)
+    }
+
+    pub fn load(&self, username: &str) -> AwaResult<Option<EnrollmentFile>> {
+        let path = self.path_for(username);
+        match fs::read(&path) {
+            Ok(data) => {
+                let file: EnrollmentFile = serde_json::from_slice(&data)
+                    .map_err(|e| AwaError::Config(format!("parse {}: {}", path.display(), e)))?;
+                if file.schema_version != CURRENT_SCHEMA_VERSION {
+                    return Err(AwaError::Config(format!(
+                        "schema version {} unsupported (expected {})",
+                        file.schema_version, CURRENT_SCHEMA_VERSION
+                    )));
+                }
+                Ok(Some(file))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn save(&self, file: &EnrollmentFile) -> AwaResult<()> {
+        fs::create_dir_all(&self.base_dir)?;
+        let final_path = self.path_for(&file.username);
+        let tmp_path = self
+            .base_dir
+            .join(format!(".{}.json.tmp.{}", file.username, process::id()));
+
+        let data = serde_json::to_vec_pretty(file)
+            .map_err(|e| AwaError::Config(format!("serialize: {}", e)))?;
+
+        let mut tmp = fs::File::create(&tmp_path)?;
+        tmp.write_all(&data)?;
+        tmp.sync_all()?;
+        drop(tmp);
+
+        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))?;
+        fs::rename(&tmp_path, &final_path)?;
+        Ok(())
+    }
+
+    fn path_for(&self, username: &str) -> PathBuf {
+        self.base_dir.join(format!("{}.json", username))
     }
 }
